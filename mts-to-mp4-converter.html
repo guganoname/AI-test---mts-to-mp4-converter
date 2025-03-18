@@ -1,0 +1,381 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>MTS to MP4 Batch Converter</title>
+  <style>
+    body {
+      font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+      max-width: 800px;
+      margin: 0 auto;
+      padding: 20px;
+      background-color: #f5f5f5;
+      color: #333;
+    }
+    
+    h1 {
+      color: #2c3e50;
+      text-align: center;
+      margin-bottom: 30px;
+    }
+    
+    .container {
+      background-color: white;
+      border-radius: 8px;
+      padding: 20px;
+      box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+    }
+    
+    .dropzone {
+      border: 2px dashed #3498db;
+      border-radius: 5px;
+      padding: 25px;
+      text-align: center;
+      cursor: pointer;
+      margin-bottom: 20px;
+      transition: all 0.3s;
+    }
+    
+    .dropzone:hover, .dropzone.dragover {
+      background-color: #ecf0f1;
+      border-color: #2980b9;
+    }
+    
+    #file-list {
+      margin: 20px 0;
+    }
+    
+    .file-item {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 10px;
+      margin-bottom: 5px;
+      background-color: #f9f9f9;
+      border-radius: 4px;
+    }
+    
+    .file-info {
+      flex-grow: 1;
+    }
+    
+    .file-name {
+      font-weight: bold;
+    }
+    
+    .file-size {
+      color: #7f8c8d;
+      font-size: 0.9em;
+    }
+    
+    .progress-bar {
+      height: 8px;
+      background-color: #eee;
+      border-radius: 4px;
+      overflow: hidden;
+      margin-top: 5px;
+    }
+    
+    .progress {
+      height: 100%;
+      background-color: #3498db;
+      width: 0;
+      transition: width 0.3s;
+    }
+    
+    .convert-btn, .download-btn {
+      background-color: #3498db;
+      color: white;
+      border: none;
+      padding: 10px 15px;
+      border-radius: 4px;
+      cursor: pointer;
+      font-weight: bold;
+      transition: background-color 0.3s;
+    }
+    
+    .convert-btn:hover, .download-btn:hover {
+      background-color: #2980b9;
+    }
+    
+    .convert-btn:disabled {
+      background-color: #95a5a6;
+      cursor: not-allowed;
+    }
+    
+    .download-btn {
+      background-color: #2ecc71;
+      display: none;
+      margin-left: 10px;
+    }
+    
+    .download-btn:hover {
+      background-color: #27ae60;
+    }
+    
+    .status {
+      margin-top: 20px;
+      color: #7f8c8d;
+    }
+
+    .loading {
+      display: inline-block;
+      margin-left: 10px;
+      width: 16px;
+      height: 16px;
+      border: 2px solid rgba(0,0,0,0.1);
+      border-left-color: #3498db;
+      border-radius: 50%;
+      animation: spin 1s linear infinite;
+    }
+
+    @keyframes spin {
+      to { transform: rotate(360deg); }
+    }
+
+    .hidden {
+      display: none;
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h1>MTS to MP4 Batch Converter</h1>
+    
+    <div id="dropzone" class="dropzone">
+      <p>Drag & drop MTS files here or <strong>click to select</strong></p>
+      <input type="file" id="file-input" multiple accept=".mts" style="display: none;">
+    </div>
+    
+    <div id="file-list"></div>
+    
+    <div style="text-align: center;">
+      <button id="convert-btn" class="convert-btn" disabled>Convert All Files</button>
+      <div id="status" class="status"></div>
+    </div>
+  </div>
+
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/ffmpeg/0.10.0/ffmpeg.min.js"></script>
+  <script>
+    document.addEventListener('DOMContentLoaded', () => {
+      // DOM elements
+      const dropzone = document.getElementById('dropzone');
+      const fileInput = document.getElementById('file-input');
+      const fileList = document.getElementById('file-list');
+      const convertBtn = document.getElementById('convert-btn');
+      const statusEl = document.getElementById('status');
+      
+      // State variables
+      let files = [];
+      let ffmpegLoaded = false;
+      let ffmpeg = null;
+      
+      // Initialize FFmpeg
+      const loadFFmpeg = async () => {
+        try {
+          statusEl.innerHTML = 'Loading FFmpeg... <div class="loading"></div>';
+          
+          // Create FFmpeg instance
+          ffmpeg = FFmpeg.createFFmpeg({ log: true });
+          await ffmpeg.load();
+          
+          ffmpegLoaded = true;
+          statusEl.textContent = 'FFmpeg loaded successfully. Ready to convert.';
+          updateConvertButton();
+        } catch (error) {
+          statusEl.textContent = `Error loading FFmpeg: ${error.message}`;
+          console.error('Error loading FFmpeg:', error);
+        }
+      };
+      
+      // Load FFmpeg on page load
+      loadFFmpeg();
+      
+      // File input change handler
+      fileInput.addEventListener('change', handleFileSelect);
+      
+      // Convert button click handler
+      convertBtn.addEventListener('click', convertFiles);
+      
+      // Dropzone event handlers
+      dropzone.addEventListener('click', () => fileInput.click());
+      dropzone.addEventListener('dragover', e => {
+        e.preventDefault();
+        dropzone.classList.add('dragover');
+      });
+      dropzone.addEventListener('dragleave', () => {
+        dropzone.classList.remove('dragover');
+      });
+      dropzone.addEventListener('drop', e => {
+        e.preventDefault();
+        dropzone.classList.remove('dragover');
+        
+        const droppedFiles = e.dataTransfer.files;
+        const mtsFiles = Array.from(droppedFiles).filter(file => file.name.toLowerCase().endsWith('.mts'));
+        
+        if (mtsFiles.length > 0) {
+          addFiles(mtsFiles);
+        } else {
+          statusEl.textContent = 'Please drop only MTS files.';
+        }
+      });
+      
+      // Handle file selection
+      function handleFileSelect(e) {
+        const selectedFiles = e.target.files;
+        if (selectedFiles.length > 0) {
+          addFiles(selectedFiles);
+        }
+      }
+      
+      // Add files to the list
+      function addFiles(newFiles) {
+        for (const file of newFiles) {
+          if (!files.some(f => f.name === file.name)) {
+            files.push(file);
+            
+            // Create file item element
+            const fileItem = document.createElement('div');
+            fileItem.className = 'file-item';
+            fileItem.dataset.filename = file.name;
+            
+            const fileInfo = document.createElement('div');
+            fileInfo.className = 'file-info';
+            
+            const fileName = document.createElement('div');
+            fileName.className = 'file-name';
+            fileName.textContent = file.name;
+            
+            const fileSize = document.createElement('div');
+            fileSize.className = 'file-size';
+            fileSize.textContent = formatFileSize(file.size);
+            
+            const progressContainer = document.createElement('div');
+            progressContainer.className = 'progress-bar';
+            
+            const progress = document.createElement('div');
+            progress.className = 'progress';
+            
+            const downloadBtn = document.createElement('button');
+            downloadBtn.className = 'download-btn';
+            downloadBtn.textContent = 'Download';
+            downloadBtn.style.display = 'none';
+            downloadBtn.addEventListener('click', () => {
+              const outputFilename = file.name.replace('.mts', '.mp4');
+              const downloadLink = document.createElement('a');
+              downloadLink.href = URL.createObjectURL(file.outputBlob);
+              downloadLink.download = outputFilename;
+              downloadLink.click();
+            });
+            
+            progressContainer.appendChild(progress);
+            fileInfo.appendChild(fileName);
+            fileInfo.appendChild(fileSize);
+            fileInfo.appendChild(progressContainer);
+            fileItem.appendChild(fileInfo);
+            fileItem.appendChild(downloadBtn);
+            fileList.appendChild(fileItem);
+          }
+        }
+        
+        updateConvertButton();
+      }
+      
+      // Format file size
+      function formatFileSize(bytes) {
+        if (bytes === 0) return '0 Bytes';
+        
+        const k = 1024;
+        const sizes = ['Bytes', 'KB', 'MB', 'GB'];
+        const i = Math.floor(Math.log(bytes) / Math.log(k));
+        
+        return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
+      }
+      
+      // Update convert button state
+      function updateConvertButton() {
+        convertBtn.disabled = files.length === 0 || !ffmpegLoaded;
+      }
+      
+      // Convert files
+      async function convertFiles() {
+        if (files.length === 0 || !ffmpegLoaded) return;
+        
+        convertBtn.disabled = true;
+        statusEl.textContent = 'Converting files...';
+        
+        for (let i = 0; i < files.length; i++) {
+          const file = files[i];
+          const fileItem = document.querySelector(`.file-item[data-filename="${file.name}"]`);
+          const progressBar = fileItem.querySelector('.progress');
+          const downloadBtn = fileItem.querySelector('.download-btn');
+          
+          // Skip if already converted
+          if (file.converted) continue;
+          
+          try {
+            // Update status
+            statusEl.textContent = `Converting ${file.name} (${i + 1}/${files.length})...`;
+            
+            // Read file data
+            const data = await readFileAsArrayBuffer(file);
+            
+            // Get input and output filenames
+            const inputFilename = file.name;
+            const outputFilename = inputFilename.replace('.mts', '.mp4');
+            
+            // Write file to FFmpeg virtual filesystem
+            ffmpeg.FS('writeFile', inputFilename, new Uint8Array(data));
+            
+            // Run FFmpeg command
+            await ffmpeg.run(
+              '-i', inputFilename,
+              '-c:v', 'libx264',
+              '-preset', 'fast',
+              '-crf', '22',
+              '-c:a', 'aac',
+              '-b:a', '128k',
+              outputFilename
+            );
+            
+            // Read output file
+            const outputData = ffmpeg.FS('readFile', outputFilename);
+            
+            // Create output blob
+            const outputBlob = new Blob([outputData.buffer], { type: 'video/mp4' });
+            file.outputBlob = outputBlob;
+            file.converted = true;
+            
+            // Update UI
+            progressBar.style.width = '100%';
+            downloadBtn.style.display = 'block';
+            
+          } catch (error) {
+            statusEl.textContent = `Error converting ${file.name}: ${error.message}`;
+            console.error(`Error converting ${file.name}:`, error);
+          }
+        }
+        
+        // Update final status
+        const convertedCount = files.filter(f => f.converted).length;
+        statusEl.textContent = `Conversion complete. ${convertedCount}/${files.length} files converted successfully.`;
+        
+        convertBtn.disabled = false;
+      }
+      
+      // Read file as ArrayBuffer
+      function readFileAsArrayBuffer(file) {
+        return new Promise((resolve, reject) => {
+          const reader = new FileReader();
+          
+          reader.onload = () => resolve(reader.result);
+          reader.onerror = () => reject(new Error('Error reading file'));
+          
+          reader.readAsArrayBuffer(file);
+        });
+      }
+    });
+  </script>
+</body>
+</html>
